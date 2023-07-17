@@ -1,0 +1,142 @@
+---
+title: "Coordinación de muestra"
+output: html_document
+date: "2023-05-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(SamplingCoordination)
+```
+
+```{r}
+marco <- readRDS("marco.rds")
+muestra1 <- readRDS("muestra1.Rds") 
+muestra2 <- readRDS("muestra2.Rds") 
+```
+
+ 
+Revisamos si tenemos el mismo estrato en ambas encuestas:
+
+```{r}
+table(unique(muestra1$ID.Estrato) %>% sort() %in% unique(muestra2$ID.Estrato) %>%
+        sort())
+
+```
+
+Observamos que en 147 de los 150 estratos existen coincidencias de estratos, y en estos podríamos coordinar las muestras. Seleccionamos los estratos coincidentes:
+
+
+```{r}
+vctr_estratos <- unique(muestra1$ID.Estrato)[unique(muestra1$ID.Estrato) %in% unique(muestra2$ID.Estrato)] %>% sort()
+```
+
+
+Seleccionamos del marco una tabla que tenga el estrato, la UPM y el número de viviendas y filtramos por los estratos comunes (147 estratos):
+
+```{r}
+marco <- marco %>% select(estrato, id_upm, num_viv) %>% 
+  filter(estrato %in% vctr_estratos)
+```
+
+
+Realizamos una consulta que nos permita analizar cuantas UPM's hay por estrato:
+
+```{r}
+consulta_numUPMS_estrato <- marco %>% group_by(estrato) %>% count()
+```
+
+
+```{r}
+summary(consulta_numUPMS_estrato$n)
+```
+
+El estrato que menos tamaño poblacional tiene es 55, el que más 9801.
+
+
+# Prototipo algoritmo de coordinación negativa
+
+Realizaremos el prototipo en un solo estrato, previamente integraremos una columna que tenga una tabla para el primer estrato y realizaremos la coordinación negativa de las dos encuestas.
+
+
+```{r}
+temp1 <- muestra1 %>% filter(ID.Estrato == vctr_estratos[1])
+temp2 <- muestra2 %>% filter(ID.Estrato == vctr_estratos[1])
+
+# Conformación de tabla de parámetros para realizar la selección del marco del tamaño de muestra
+tipo_coordinacion <- "negative"
+num_encuestas <- 2
+temp_marco <- marco %>% filter(estrato == vctr_estratos[1])
+N_marco_estrato <- nrow(temp_marco)
+
+semilla <- 1 
+vctr_n <- c(temp1$muestra1, temp2$muestra2)
+
+sel_MASNeg <- SI_coord(type = tipo_coordinacion, Q = num_encuestas,
+                       N = N_marco_estrato, 
+                       vctr_n = vctr_n, seed = semilla)
+sel_MASNeg$ID.Estrato <- vctr_estratos[1]
+
+# Guardo las UPMS seleccionadas
+temp_muestra1 <- temp_marco[as.logical(sel_MASNeg$s1),]
+temp_muestra2 <- temp_marco[as.logical(sel_MASNeg$s2),]
+```
+
+
+Ahora aplicamos este procedimiento masivamente:
+
+
+```{r}
+# Generamos la lista donde guardemos el dataframe de números aleatorios y 
+lst_muestracoordinada1 <- vector(mode = "list", length = length(vctr_estratos))
+lst_muestracoordinada2 <- vector(mode = "list", length = length(vctr_estratos))
+lst_numerosAleatoriosCoordinados <- vector(mode = "list", length = length(vctr_estratos))
+
+
+for(i in 1:length(vctr_estratos)){
+
+  temp1 <- muestra1 %>% filter(ID.Estrato == vctr_estratos[i])
+  temp2 <- muestra2 %>% filter(ID.Estrato == vctr_estratos[i])
+  
+  # Conformación de tabla de parámetros para realizar la selección del marco del tamaño de muestra
+  tipo_coordinacion <- "negative"
+  num_encuestas <- 2
+  temp_marco <- marco %>% filter(estrato == vctr_estratos[i])
+  N_marco_estrato <- nrow(temp_marco)
+  
+  semilla <- i
+  vctr_n <- c(temp1$muestra1, temp2$muestra2)
+  
+  sel_MASNeg <- SI_coord(type = tipo_coordinacion, 
+                         Q = num_encuestas, N = N_marco_estrato, 
+                         vctr_n = vctr_n, seed = semilla)
+  sel_MASNeg$ID.Estrato <- vctr_estratos[i]
+  lst_numerosAleatoriosCoordinados[[i]] <- sel_MASNeg
+  
+  
+  # Guardo las UPMS seleccionadas
+  lst_muestracoordinada1[[i]] <- temp_marco[as.logical(sel_MASNeg$s1),]
+  lst_muestracoordinada2[[i]] <- temp_marco[as.logical(sel_MASNeg$s2),]
+  print(i)
+}
+
+
+```
+
+Unificamos la salidas:
+
+
+```{r}
+df_muestracoordinada1 <- bind_rows(lst_muestracoordinada1)
+df_muestracoordinada2 <- bind_rows(lst_muestracoordinada2)
+
+df_numerosAleatoriosCoordinados <- bind_rows(lst_numerosAleatoriosCoordinados)
+```
+
+
+

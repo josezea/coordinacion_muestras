@@ -1,0 +1,139 @@
+---
+title: "Rotación"
+author: "José Fernando Zea"
+date: "2023-07-03"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# install_github("psirusteam/SamplingCoordination")
+library(samplesize4surveys)
+library(SamplingCoordination)
+library(dplyr)
+library(readxl)
+library(writexl)
+library(readxl)
+library(flextable)
+```
+
+# Procedimiento de rotación
+
+Durante el período intercensal se deberán realizar diferentes encuestas entre las que se destacan la Encuesta Nacional de Hogares y la Encuesta Continua de Empleo. Como se especificó anteriormente dos variables que son la tasa de desocupación y la proporción de hogares con pobreza extrema permitieron obtener un tamaño de muestra a nivel nacional, por zona y región de manera que se satisfaga los niveles de precisión para la tasa de desocupación (indicador trimestral) y la propoción de pobreza extrema (al acumular dos trimestres en el año). El INEC de Costa Rica estableció en conjunto con la CEPAL una estrategia de rotación de UPM durante el período intercensal con el esquema 5-0-0 trimestral. Este esquema repite la visita de una UPM durante 5 trimestres consecutivos (cada tres meses se realiza una visita por lo que el esquema 5-0-0 trimestral es equivalente al esquema 1-2-5 mensual). 
+
+Con este esquema se define realizar una encuesta en determinadas visitas, por ejemmplo la Encuesta Nacional de Hogares se realiza en la primera y en la quinta visita, otras encuestas más pequeñas pueden realizarse unicamente durante una visita y la Encuesta Continua de Empleo se lleva a cabo en las 5 visitas (cada tres meses) que le corresponda a un hogar.
+
+
+El proceso de rotación se llevará a cabo en dos etapas:
+
+- Asignar todas las UPM a los paneles
+- Seleccionar aleatoriamente las UPM en cada panel de manera que el tamaño de muestra acumulado trimestralmente sume el tamaño de muestra definido en cada estrato. Observemos que el número de paneles que se utiliza en cada trimestre son 15 paneles como se ilustra en la imagen a continuación:
+
+![](images/Paneles_imagen.png){width="654"}
+Lo anterior significa que la muestra trimestral se debe repartir en 15 paneles cada trimestre.
+Puede ocurrir que la cantidad de UPM's a seleccionar en cada uno de los 15 paneles sea mayor que la cantidad de UPMs que se asigna inicialmente en cada uno de los 156 paneles.
+En caso de que lo anterior no ocurra se deberán construir particiones virtuales de manera que el número de UPMs asignadas inicialmente en cada uno de los paneles sea mayor al número de UPMs que se deberán seleccionar en cada uno de los paneles en cada trimestre.
+
+
+Defiremos las rotaciones durante 12 años (2024-2035), generamos la rotación con el esquema trimestral 5-0-0:
+
+```{r}
+num_annos <- 12
+num_trimestres <- 4
+num_trimestres <- num_annos * num_trimestres # 13 años * 4 trimestres por año
+paneles <- cbind(Rotating_panels(5, 0, 0, num_trimestres), # Mes 1
+                 Rotating_panels(5, 0, 0, num_trimestres, value_initial =  "F"), # Mes 2
+                 Rotating_panels(5, 0, 0, num_trimestres, value_initial = "K")) # Mes 3
+paneles <- as.data.frame(paneles)
+
+row.names(paneles) <- paste0(rep(2024:(2024 + (num_annos-1)), each = 4), "-", 
+                                          rep(1:4, num_annos))
+
+colnames(paneles) <-  paste0(c(rep("Mes1", 5), rep("Mes2", 5), rep("Mes3", 5)), "-", 
+                             names(paneles))
+paneles %>% as.data.frame() 
+```
+
+Los paneles únicos que se usarán durante los 12 años (48 trimestres ) se presenta a continuación:
+
+```{r}
+paneles %>% as.matrix() %>% as.vector() %>% unique() %>% sort() %>% matrix(nrow = 12, byrow = T)
+```
+
+Durante los 12 años se considera un total de 156 paneles, cada una de las UPMS de cada región se asignará a cada uno de estos paneles.
+
+```{r}
+paneles %>% as.matrix() %>% as.vector() %>% unique() %>% length()
+```
+
+# Asignación de UPMS a los estratos
+
+Para asignar los tamaños de muestra utilizaremos la información de parámetros:
+
+```{r}
+flextable::flextable(df_parametros %>% select(Agregacion, N, M, r1, r2) %>% 
+                       cbind(df_tam_desoc %>% select(PSUinSample)))
+```
+
+## Región Central
+
+En la región central existe un total de 4.626 UPM con una población de 1.643.721 personas de los cuales aproxidamente la mitad corresponde a población económicamente activa (0,63 * 0,8 = 0,504). Por otro lado el tamaño de muestra de UPMS es 952 UPMs cada trimestre.
+
+Las 4.626 UPMs del estrato "Region - Central" serán asignadas a los 156 paneles:
+
+```{r}
+num_upms_central <- 5975
+tam_mue_central <- 952
+datos_region_central <- data.frame(estrato = rep("region_central", num_upms_central),
+                                   id_upm = 1:num_upms_central)
+resultado_central <- SamplingCoordination::Panel_sampling(DF = datos_region_central,
+                                                  stratum_column = "estrato",
+                                     PSU_column = "id_upm", panels = paneles,
+                                     PSU_stratum_size = num_upms_central, #nrow(datos_region_central) 
+                                     PSU_stratum_sample_size = tam_mue_central) 
+```
+
+Las UPMs disponibles no son suficiente para asignar el tamaño de muestra intercensal:
+
+```{r}
+resultado_central$Panel_structure
+```
+
+El número de UPMs que se asignan en cada uno de los 156 paneles es de 39 o de 38 UPMs y se requieren para satisfacer el tamaño de muestra transversal un total de 63 o 64 UPMs a seleccionar en cada panel.
+
+```{r}
+resultado_central$Panel_structure_sample
+```
+
+Por lo tanto crearemos UPMS virtuales, se requiere dividir las UPMs en tres UPMS virtuales:
+
+```{r}
+datos_region_central <- data.frame(estrato = rep("region_central", num_upms_central*2),
+                                   id_upm = c(paste0(1:num_upms_central, "A"), 
+                                              paste0(1:num_upms_central, "B"))) %>% 
+                        arrange(id_upm)
+
+resultado_central <- SamplingCoordination::Panel_sampling(DF =  datos_region_central,
+                                                  stratum_column = "estrato",
+                                     PSU_column = "id_upm", panels = paneles,
+                                     PSU_stratum_size = num_upms_central * 2, #nrow(datos_region_central) 
+                                     PSU_stratum_sample_size = tam_mue_central) 
+```
+
+Se construyen las UPMS con 76 u 77 UPMs virtuales para satisfacer el tamaño de muestra requerido en cada trimestre:
+```{r}
+resultado_central$Panel_structure
+```
+Se seleccionarán 63 o 64 UPMs dentro de cada panel para satisfacer los tamaños requeridos en cada trimestre:
+
+```{r}
+resultado_central$Panel_structure_sample
+```
+

@@ -1,0 +1,346 @@
+---
+title: "Coordinación de muestras"
+author: "José Fernando Zea -  Andrés Gutierrez"
+date: '2022-12-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+```
+
+
+# Generación de muestras aleatorios
+
+Desarrollamos la función de selección de números aleatorios colocados, permanentes y Pareto:
+
+
+```{r}
+genera_alea <- function(N, semilla, xk = NULL, indica_pareto = F, n = NULL){
+  
+  set.seed(semilla)  
+  Xi_Perman <- runif(N)  
+
+  set.seed(semilla)  
+  epsilon <-  runif(1)
+
+  Xi_Coloc <- (rank(Xi_Perman) - epsilon) / N
+
+  salida <- list(Xi_Perman, Xi_Coloc)
+  names(salida) <- c("Xi_Perman", "Xi_Coloc")
+
+  if(isTRUE(indica_pareto) & (!is.null(xk) & is.null(n)) | (is.null(xk) & !is.null(n))) 
+    stop("Ingrese n y el vector xk")
+  
+  if(!is.null(xk)){
+    if(length(xk) != N) stop("Introduzca un vector xk de la misma longitud de N")
+    
+    # Pipt no depende de n
+    pk = xk / sum(xk)
+    Xi_ppt <-  Xi_Perman / (N * pk)
+
+    if(isTRUE(indica_pareto)){
+    
+    # Pareto (si depende de n)
+    pi_k <- TeachingSampling::PikPPS(n, x = xk)
+    Xi_Pareto <- (Xi_Perman / (1 - Xi_Perman)) / (pi_k / (1 - pi_k))  
+    salida <- list(Xi_Perman, Xi_Coloc, Xi_Pareto)
+    names(salida) <- c("Xi_Perman", "Xi_Coloc", "Xi_Pareto")
+    
+    } else { # # Pipt no depende de n
+    salida <- list(Xi_Perman, Xi_Coloc, Xi_ppt)
+    names(salida) <- c("Xi_Perman", "Xi_Coloc", "Xi_pipt")
+}
+  }
+
+return(salida)
+}
+```
+
+
+La generación de números aleatorios devuelve los números aleatorios permanentes y colocados, por ejemplo si queremos 5 números aleatorios:
+
+```{r}
+genera_alea(N = 5, semilla = 12345)
+```
+
+
+En caso de que se devuelva una variable auxiliar, el programa devuelve los números aleatorios Pareto:
+
+```{r}
+genera_alea(N = 5, semilla = 12345, xk = c(50, 40, 70, 30, 90))
+```
+
+
+```{r}
+genera_alea(N = 5, semilla = 12345, xk = c(50, 40, 70, 30, 90), indica_pareto = T, n = 3)
+```
+
+# Muestreo aleatorio simple coordinado
+
+Es posible construir unn algoritmo de selección general para varias muestras
+
+```{r}
+# Coordinación: positiva o negativa
+# Q: número de muestras
+# N: Tamaño de población
+# vctr_n: tamaño de muestra de cada una de las Q muestras
+# Semilla: semilla para la generación de números aleatorios
+f_MAS_coord <- function(coordinacion = "negativa", Q = 2, N = 10, vctr_n, 
+                        semilla = 12345){
+
+xi_P <- genera_alea(N = N, semilla = semilla,)$Xi_Perman
+
+
+if(coordinacion == "negativa"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + (i-1) / Q
+  }
+  
+  
+  
+  # Inicialización
+  df <- data.frame(unit = 1:N, xi_P) %>% arrange(xi_P) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_P", i)]] <- (df[["xi_P"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_P", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+}
+
+
+
+if(coordinacion == "positiva"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + 0
+  }
+  
+  
+  
+  # Inicialización
+  df <- data.frame(unit = 1:N, xi_P) %>% arrange(xi_P) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_P", i)]] <- (df[["xi_P"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_P", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+  
+}
+
+  df <- df %>% arrange(unit)
+  df
+}
+```
+
+
+Ejemplificamos la selección de la muestra:
+
+```{r}
+#coordinacion = "negativa"; Q <- 3; N <- 100; vctr_n <- c(10, 20, 12); semilla = 12345
+prueba_masCoord <- f_MAS_coord(coordinacion = "negativa",
+                               Q = 3, N = 100, 
+                               vctr_n =c(10, 20, 12),
+                               semilla = 12345)
+```
+
+
+
+# Poisson coordinado
+
+```{r}
+# coordinacion = "negativa"; Q = 2; N = 10; vctr_n = c(3,3); n = 3
+# xk = c(198, 173, 184, 179, 170, 190, 162, 159, 166, 190);
+# semilla = 12345
+
+f_Poisson_coord <- function(coordinacion = "negativa", Q = 2, N = 10,
+                            vctr_n, # vectr_n es del Q
+                            xk, 
+                        semilla = 12345){
+
+  
+xi_pps <- genera_alea(N = N, semilla = semilla,  xk)$Xi_pipt
+
+
+if(coordinacion == "negativa"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + (i-1) / Q
+  }
+  
+  
+  
+  # Inicialización
+  df <- data.frame(unit = 1:N, xi_pps) %>% arrange(xi_pps) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_pps", i)]] <- (df[["xi_pps"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_pps", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+}
+
+
+
+if(coordinacion == "positiva"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + 0
+  }
+  
+  
+    # Inicialización
+  df <- data.frame(unit = 1:N, xi_pps) %>% arrange(xi_pps) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_pps", i)]] <- (df[["xi_pps"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_pps", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+  
+}
+
+  df <- df %>% arrange(unit)
+  df
+}
+```
+
+
+El método Poisson coordenado se ejemplifica a continuación:
+
+```{r}
+prueba_PoissonCoord <- f_Poisson_coord(coordinacion = "negativa", Q = 3, N = 12, 
+                                       vctr_n = c(3, 3, 2), 
+               xk = c(165, 198, 173, 184, 179, 170, 190, 162, 159, 166, 190, 195),
+               semilla = 12345)
+```
+
+
+```{r}
+prueba_PoissonCoord2 <- f_Poisson_coord(coordinacion = "positiva", Q = 2, N = 10, vctr_n = c(3,3), 
+               xk = c(198, 173, 184, 179, 170, 190, 162, 159, 166, 190),
+               n = 3,
+               semilla = 12345)
+prueba_PoissonCoord2
+```
+
+
+
+# Pareto coordinado
+
+
+```{r}
+# coordinacion = "negativa"; Q = 2; N = 10; vctr_n = c(3,3); n = 3
+# xk = c(198, 173, 184, 179, 170, 190, 162, 159, 166, 190);
+# semilla = 12345
+
+
+f_Pareto_coord <- function(coordinacion = "negativa", Q = 2, N = 10, vctr_n, 
+                            xk, n,
+                            semilla = 12345){
+
+  
+xi_pareto <- genera_alea(N = N, semilla = semilla,  xk, indica_pareto = T, n)$Xi_Pareto
+
+
+if(coordinacion == "negativa"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + (i-1) / Q
+  }
+  
+  
+  
+  # Inicialización
+  df <- data.frame(unit = 1:N, xi_pareto) %>% arrange(xi_pareto) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_pareto", i)]] <- (df[["xi_pareto"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_pareto", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+}
+
+
+
+if(coordinacion == "positiva"){
+  vctr_a <- rep(NA_real_, Q)
+  vctr_a[1] <- 0
+  
+  for(i in 1:Q){
+    vctr_a[i] <- vctr_a[1] + 0
+  }
+  
+  
+    # Inicialización
+  df <- data.frame(unit = 1:N, xi_pareto) %>% arrange(desc(xi_pareto)) %>%
+        mutate(s1 = c(rep(1, vctr_n[1]),  rep(0, N - vctr_n[1])))
+  
+  for(i in 2:Q){
+    df[[paste0("xi_pareto", i)]] <- (df[["xi_pareto"]] + vctr_a[i]) %% 1
+    df <- df[order(df[[paste0("xi_pareto", i)]]), ]
+    df[[paste0("s", i)]] <- c(rep(1, vctr_n[i]), rep(0, N - vctr_n[i]))
+  }
+  
+  
+  
+}
+
+  df <- df %>% arrange(unit)
+  df
+}
+```
+
+
+
+
+
+```{r}
+prueba_ParetoCoord <- f_Pareto_coord(coordinacion = "negativa", Q = 3, N = 16, vctr_n = c(3,3, 3), 
+               xk = c(170, 180, 198, 173, 184, 179, 170, 190, 162, 159, 166, 190, 220, 240, 150, 270),
+               n = 3,
+               semilla = 1234567)
+prueba_ParetoCoord
+```
+
+
+
+```{r}
+prueba_ParetoCoord2 <- f_Pareto_coord(coordinacion = "positiva", Q = 2, N = 10, vctr_n = c(3,3), 
+               xk = c(198, 173, 184, 179, 170, 190, 162, 159, 166, 190),
+               n = 3,
+               semilla = 12345)
+prueba_ParetoCoord2
+```
